@@ -6,6 +6,10 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "pstat.h"
+
+#define RAND_MAX ((1U << 31) - 1)
+static int rseed = 1898888478;
 
 struct {
   struct spinlock lock;
@@ -139,6 +143,10 @@ userinit(void)
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
 
+  //setting ticks and tickets for init process
+  p->ticks = 0;
+  p->tickets = 10;
+
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
@@ -199,6 +207,14 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  //setting ticks and tickets for new process
+  np->ticks = 0;
+  if(curproc->tickets > 10){
+    np->tickets = curproc->tickets;
+  }else{
+    np->tickets = 10;
+  }
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -531,4 +547,64 @@ procdump(void)
     }
     cprintf("\n");
   }
+}
+
+//fillpstat
+void
+fillpstat(pstatTable *pstats){
+  pstat_t *pstat = pstats[0];
+  struct proc *p;
+
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+
+    pstat->tickets = p->tickets;  //int
+    pstat->pid = p->pid;      //int
+    pstat->ticks = p->ticks;    //int
+    safestrcpy(pstat->name, p->name, sizeof(pstat->name));     //char[16]
+
+    //pstat->state char 'E', 'R', 'A', 'S', 'Z' (embryo, running, runnable, sleeping, zombie)
+    switch(p->state){
+      case EMBRYO:
+        pstat->state = 'E';
+        break;
+      case RUNNING:
+        pstat->state = 'R';
+        break;
+      case RUNNABLE:
+        pstat->state = 'A';
+        break;
+      case SLEEPING:
+        pstat->state = 'S';
+        break;
+      case ZOMBIE:
+        pstat->state = 'Z';
+        break;
+      default:
+        break;
+    }
+    pstat++;
+  }
+  release(&ptable.lock);
+  return;
+}
+
+//set tickets
+void
+settickets(int number){
+  struct proc *p;
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == RUNNING){
+      p->tickets = number;
+    }
+  }
+  release(&ptable.lock);
+  return;
+}
+
+//get random
+int
+random(){
+  return rseed = (rseed * 1103515245 + 12345) & RAND_MAX;
 }
