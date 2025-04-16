@@ -10,6 +10,11 @@
 
 #define RAND_MAX ((1U << 31) - 1)
 static int rseed = 1898888478;
+//get random
+int
+random(void){
+  return rseed = (rseed * 1103515245 + 12345) & RAND_MAX;
+}
 
 struct {
   struct spinlock lock;
@@ -341,33 +346,62 @@ scheduler(void)
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
-  
+  int randomWinner = random();
+  int totalTickets = 0;
+  int count = 0;
+
   for(;;){
     // Enable interrupts on this processor.
     sti();
 
     // Loop over process table looking for process to run.
+    //also set total amount of tickets for runnable processes.
     acquire(&ptable.lock);
+    totalTickets = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
+      if(p->state != RUNNABLE){
         continue;
-
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
-
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+      }else{
+        totalTickets += p->tickets;
+      }
     }
-    release(&ptable.lock);
 
+    //if runnable processes are present...
+    if(totalTickets > 0){
+      randomWinner = randomWinner % totalTickets;
+      count = 0;
+
+      //loop over process table and find the runnable processes
+      for(p = ptable.proc; p <= &ptable.proc[NPROC]; p++){
+        if(p->state == RUNNABLE){
+          count += p->tickets;
+          //someone has won the lottery!
+          if(count > randomWinner){
+            break;
+          }
+        }
+      }
+    }else{ //if there are no runnable processes, run loop again
+      release(&ptable.lock);
+      continue;
+    }
+    //switch to lottery winning process!
+
+    // Switch to chosen process.  It is the process's job
+    // to release ptable.lock and then reacquire it
+    // before jumping back to us.
+    c->proc = p;
+    switchuvm(p);
+    p->state = RUNNING;
+    p->ticks++;
+
+    swtch(&(c->scheduler), p->context);
+    switchkvm();
+
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+    release(&ptable.lock);
   }
 }
 
@@ -549,7 +583,7 @@ procdump(void)
   }
 }
 
-//fillpstat
+//fillpstat table from processtable
 void
 fillpstat(pstatTable *pstats){
   pstat_t *pstat = pstats[0];
@@ -601,10 +635,4 @@ settickets(int number){
   }
   release(&ptable.lock);
   return;
-}
-
-//get random
-int
-random(){
-  return rseed = (rseed * 1103515245 + 12345) & RAND_MAX;
 }
